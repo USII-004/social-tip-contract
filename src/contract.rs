@@ -1,156 +1,188 @@
-#[cfg(not(feature = "library"))]
-use cosmwasm_std::entry_point;
-use cosmwasm_std::{to_json_binary, Binary, Deps, DepsMut, Env, MessageInfo, Response, StdResult};
-use cw2::set_contract_version;
+use cosmwasm_std::{
+    entry_point, to_json_binary, BankMsg, Binary, Coin, Deps, DepsMut, Env, Event, MessageInfo, Response, StdError, StdResult
+};
 
-use crate::error::ContractError;
-use crate::msg::{ExecuteMsg, GetCountResponse, InstantiateMsg, QueryMsg};
-use crate::state::{State, STATE};
+use crate::helpers::{create_response, validate_identifier};
+use crate::msg::{ExecuteMsg, InstantiateMsg, QueryMsg, BalanceResponse, AccountResponse, EscrowResponse};
+use crate::state::{TOKEN_DENOM, ACCOUNTS, ESCROWS, Escrow};
 
 // version info for migration info
-const CONTRACT_NAME: &str = "crates.io:social-tip-contract";
-const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
+const _CONTRACT_NAME: &str = "crates.io:social-tip-contract";
+const _CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn instantiate(
     deps: DepsMut,
     _env: Env,
-    info: MessageInfo,
+    _info: MessageInfo,
     msg: InstantiateMsg,
-) -> Result<Response, ContractError> {
-    let state = State {
-        count: msg.count,
-        owner: info.sender.clone(),
-    };
-    set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
-    STATE.save(deps.storage, &state)?;
-
-    Ok(Response::new()
-        .add_attribute("method", "instantiate")
-        .add_attribute("owner", info.sender)
-        .add_attribute("count", msg.count.to_string()))
+) -> StdResult<Response> {
+    TOKEN_DENOM.save(deps.storage, &msg.token_denom)?;
+    Ok(create_response("instantiate", vec![("token_denom", &msg.token_denom)]))
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn execute(
     deps: DepsMut,
+    env: Env,
+    info: MessageInfo,
+    msg: &ExecuteMsg,
+) -> StdResult<Response> {
+    match msg {
+        ExecuteMsg::Register { identifier } => execute_register(deps, info, identifier),
+        ExecuteMsg::Transfer { identifier, amount } => execute_transfer(deps, env, info, identifier, amount),
+        ExecuteMsg::Claim { identifier } => execute_claim(deps, info, identifier),    
+    }
+}
+
+fn execute_register(
+    deps: DepsMut,
+    info: MessageInfo,
+    identifier: &str
+) -> StdResult<Response> {
+    // Validate identifier (basic mail or username check)
+    validate_identifier(identifier)?;
+
+    // check if identifier is already registered
+    if ACCOUNTS.has(deps.storage, identifier.to_string()) {
+        return Err(StdError::generic_err("Identifier already registered"));
+    }
+    // save mapping
+    ACCOUNTS.save(deps.storage, identifier.to_string(), &info.sender)?;
+    Ok(create_response(
+        "register",
+        vec![
+            ("identifier", identifier),
+            ("address", info.sender.as_ref()),
+        ],
+    ))
+}
+
+fn execute_transfer(
+    deps: DepsMut,
     _env: Env,
     info: MessageInfo,
-    msg: ExecuteMsg,
-) -> Result<Response, ContractError> {
-    match msg {
-        ExecuteMsg::Increment {} => execute::increment(deps),
-        ExecuteMsg::Reset { count } => execute::reset(deps, info, count),
+    identifier: &str,
+    amount: &Coin,
+) -> StdResult<Response> {
+    // Validate identifier and token denomination
+    validate_identifier(identifier)?;
+    let token_denom = TOKEN_DENOM.load(deps.storage)?;
+    if amount.denom != token_denom {
+        return Err(StdError::generic_err("Invalid token denomination"));
     }
-}
-
-pub mod execute {
-    use super::*;
-
-    pub fn increment(deps: DepsMut) -> Result<Response, ContractError> {
-        STATE.update(deps.storage, |mut state| -> Result<_, ContractError> {
-            state.count += 1;
-            Ok(state)
-        })?;
-
-        Ok(Response::new().add_attribute("action", "increment"))
-    }
-
-    pub fn reset(deps: DepsMut, info: MessageInfo, count: i32) -> Result<Response, ContractError> {
-        STATE.update(deps.storage, |mut state| -> Result<_, ContractError> {
-            if info.sender != state.owner {
-                return Err(ContractError::Unauthorized {});
-            }
-            state.count = count;
-            Ok(state)
-        })?;
-        Ok(Response::new().add_attribute("action", "reset"))
-    }
-}
-
-#[cfg_attr(not(feature = "library"), entry_point)]
-pub fn query(deps: Deps, _env: Env, msg: QueryMsg) -> StdResult<Binary> {
-    match msg {
-        QueryMsg::GetCount {} => to_json_binary(&query::count(deps)?),
-    }
-}
-
-pub mod query {
-    use super::*;
-
-    pub fn count(deps: Deps) -> StdResult<GetCountResponse> {
-        let state = STATE.load(deps.storage)?;
-        Ok(GetCountResponse { count: state.count })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use cosmwasm_std::testing::{mock_dependencies, mock_env, mock_info};
-    use cosmwasm_std::{coins, from_json};
-
-    #[test]
-    fn proper_initialization() {
-        let mut deps = mock_dependencies();
-
-        let msg = InstantiateMsg { count: 17 };
-        let info = mock_info("creator", &coins(1000, "earth"));
-
-        // we can just call .unwrap() to assert this was a success
-        let res = instantiate(deps.as_mut(), mock_env(), info, msg).unwrap();
-        assert_eq!(0, res.messages.len());
-
-        // it worked, let's query the state
-        let res = query(deps.as_ref(), mock_env(), QueryMsg::GetCount {}).unwrap();
-        let value: GetCountResponse = from_json(&res).unwrap();
-        assert_eq!(17, value.count);
-    }
-
-    #[test]
-    fn increment() {
-        let mut deps = mock_dependencies();
-
-        let msg = InstantiateMsg { count: 17 };
-        let info = mock_info("creator", &coins(2, "token"));
-        let _res = instantiate(deps.as_mut(), mock_env(), info, msg).unwrap();
-
-        // beneficiary can release it
-        let info = mock_info("anyone", &coins(2, "token"));
-        let msg = ExecuteMsg::Increment {};
-        let _res = execute(deps.as_mut(), mock_env(), info, msg).unwrap();
-
-        // should increase counter by 1
-        let res = query(deps.as_ref(), mock_env(), QueryMsg::GetCount {}).unwrap();
-        let value: GetCountResponse = from_json(&res).unwrap();
-        assert_eq!(18, value.count);
-    }
-
-    #[test]
-    fn reset() {
-        let mut deps = mock_dependencies();
-
-        let msg = InstantiateMsg { count: 17 };
-        let info = mock_info("creator", &coins(2, "token"));
-        let _res = instantiate(deps.as_mut(), mock_env(), info, msg).unwrap();
-
-        // beneficiary can release it
-        let unauth_info = mock_info("anyone", &coins(2, "token"));
-        let msg = ExecuteMsg::Reset { count: 5 };
-        let res = execute(deps.as_mut(), mock_env(), unauth_info, msg);
-        match res {
-            Err(ContractError::Unauthorized {}) => {}
-            _ => panic!("Must return unauthorized error"),
+    // Check if recipient is registered
+    match ACCOUNTS.may_load(deps.storage, identifier.to_string())? {
+        Some(recipient_addr) => {
+            // Transfer tokens directly
+            let transfer_msg = BankMsg::Send { 
+                to_address: recipient_addr.to_string(),
+                amount: vec![amount.clone()], 
+            };
+            Ok(create_response(
+                "transfer",
+                vec![
+                    ("sender", info.sender.as_ref()),
+                    ("recipient", identifier),
+                    ("amount", &amount.amount.to_string()),
+                ],
+            ).add_message(transfer_msg))
         }
-
-        // only the original creator can reset the counter
-        let auth_info = mock_info("creator", &coins(2, "token"));
-        let msg = ExecuteMsg::Reset { count: 5 };
-        let _res = execute(deps.as_mut(), mock_env(), auth_info, msg).unwrap();
-
-        // should now be 5
-        let res = query(deps.as_ref(), mock_env(), QueryMsg::GetCount {}).unwrap();
-        let value: GetCountResponse = from_json(&res).unwrap();
-        assert_eq!(5, value.count);
+        None => {
+            // Hold token in escrow and emit event for off-chain notification
+            let escrow = Escrow {
+                sender: info.sender.clone(),
+                amount: amount.clone(),
+            };
+            ESCROWS.save(deps.storage, identifier.to_string(), &escrow)?;
+            let event = Event::new("unregistered transfer")
+                    .add_attribute("identifier", identifier)
+                    .add_attribute("sender", info.sender.to_string())
+                    .add_attribute("amount", amount.amount.to_string())
+                    .add_attribute("denom", amount.denom.clone());
+                Ok(create_response(
+                    "escrow",
+                    vec![
+                        ("identifier", identifier),
+                        ("sender", info.sender.as_ref()),
+                        ("amount", &amount.amount.to_string()),
+                    ],
+                ).add_event(event))       
+        }
     }
 }
+
+fn execute_claim(
+    deps: DepsMut,
+    info: MessageInfo,
+    identifier: &str
+) -> StdResult<Response> {
+    // validate identifier
+    validate_identifier(identifier)?;
+    // check if Identifier is registered to the caller
+    match ACCOUNTS.may_load(deps.storage, identifier.to_string())? {
+        Some(addr) if addr == info.sender => {
+            // check for escrowed tokens
+            match ESCROWS.may_load(deps.storage, identifier.to_string())? {
+                Some(escrow) => {
+                    // Transfer escrow tokens
+                    let transfer_msg = BankMsg::Send {
+                        to_address: info.sender.to_string(),
+                        amount: vec![escrow.amount.clone()],
+                    };
+                    // remove escrow
+                    ESCROWS.remove(deps.storage, identifier.to_string());
+                    Ok(create_response(
+                        "claim",
+                        vec![
+                            ("identifier", identifier),
+                            ("recipient", info.sender.as_ref()),
+                            ("amount", &escrow.amount.amount.to_string()),
+                        ],
+                    ).add_message(transfer_msg))   
+                }
+                None => Err(StdError::generic_err("No escrowed tokens found")),
+            }
+        }
+        _ => Err(StdError::generic_err("identifier is not registered to caller")),
+    }
+}
+
+#[entry_point]
+pub fn query(
+    deps: Deps,
+    _env: Env,
+    msg: QueryMsg,
+) -> StdResult<Binary>{
+    match msg {
+        QueryMsg::GetBalance { address } => to_json_binary(&query_balance(deps, address)?),
+        QueryMsg::GetEscrow { identifier } => to_json_binary(&query_escrow(deps, identifier)?),
+        QueryMsg::GetAccount { identifier } =>  to_json_binary(&query_account(deps, identifier)?),
+    }
+}
+
+fn query_balance(
+    deps: Deps,
+    address: String
+) -> StdResult<BalanceResponse> {
+    let addr = deps.api.addr_validate(&address)?;
+    let balance = deps.querier.query_balance(addr, TOKEN_DENOM.load(deps.storage)?)?;
+    Ok(BalanceResponse { balance })
+}
+
+fn query_escrow(
+    deps: Deps,
+    identifier: String,
+) -> StdResult<EscrowResponse> {
+    let escrow = ESCROWS.may_load(deps.storage, identifier)?;
+    Ok(EscrowResponse { escrow })
+}
+
+fn query_account(
+    deps: Deps,
+    identifier: String,
+) -> StdResult<AccountResponse> {
+    let address = ACCOUNTS.may_load(deps.storage, identifier)?;
+    Ok(AccountResponse { address }) 
+}
+

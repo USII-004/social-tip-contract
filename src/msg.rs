@@ -1,26 +1,46 @@
-use cosmwasm_schema::{cw_serde, QueryResponses};
+use cosmwasm_std::{Addr, Coin};
+use schemars::JsonSchema;
+use serde::{Serialize, Deserialize};
+use crate::state::Escrow;
+use cosmwasm_schema::QueryResponses;
 
-#[cw_serde]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 pub struct InstantiateMsg {
-    pub count: i32,
+    pub token_denom: String,
 }
 
-#[cw_serde]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum ExecuteMsg {
-    Increment {},
-    Reset { count: i32 },
+    Register { identifier: String }, // register username/email
+    Transfer { identifier: String, amount: Coin }, // Transfer token
+    Claim { identifier: String }, // Claim escrowed tokens
 }
 
-#[cw_serde]
-#[derive(QueryResponses)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema, QueryResponses)]
+#[serde(rename_all = "snake_case")]
 pub enum QueryMsg {
-    // GetCount returns the current count as a json-encoded number
-    #[returns(GetCountResponse)]
-    GetCount {},
+    #[returns(BalanceResponse)]
+    GetBalance { address: String },
+    #[returns(EscrowResponse)]
+    GetEscrow { identifier: String },
+    #[returns(AccountResponse)]
+    GetAccount { identifier: String },
 }
 
 // We define a custom struct for each query response
-#[cw_serde]
-pub struct GetCountResponse {
-    pub count: i32,
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
+pub struct BalanceResponse {
+    pub balance: Coin,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
+pub struct EscrowResponse {
+    pub escrow: Option<Escrow>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
+pub struct AccountResponse {
+    pub address: Option<Addr>,
 }
