@@ -17,4 +17,11 @@ pub struct Escrow {
     pub amount: Coin,
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
+pub struct Config {
+    pub token_denom: String,
+    pub platform_wallet: String,
+}
+
 pub const ESCROWS: Map<String, Escrow> = Map::new("escrows");
+pub const CONFIG: Item<Config> = Item::new("config");

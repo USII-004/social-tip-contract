@@ -7,6 +7,7 @@ use cosmwasm_schema::QueryResponses;
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 pub struct InstantiateMsg {
     pub token_denom: String,
+    pub platform_wallet: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]

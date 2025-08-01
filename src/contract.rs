@@ -1,10 +1,11 @@
 use cosmwasm_std::{
-    entry_point, to_json_binary, BankMsg, Binary, Coin, Deps, DepsMut, Env, Event, MessageInfo, Response, StdError, StdResult
+    entry_point, to_json_binary, BankMsg, Binary, Coin, Deps, DepsMut,
+    Env, Event, MessageInfo, Response, StdError, StdResult,
 };
 
 use crate::helpers::{create_response, validate_identifier};
 use crate::msg::{ExecuteMsg, InstantiateMsg, QueryMsg, BalanceResponse, AccountResponse, EscrowResponse};
-use crate::state::{TOKEN_DENOM, ACCOUNTS, ESCROWS, Escrow};
+use crate::state::{Config, Escrow, ACCOUNTS, CONFIG, ESCROWS, TOKEN_DENOM};
 
 // version info for migration info
 const _CONTRACT_NAME: &str = "crates.io:social-tip-contract";
@@ -17,8 +18,15 @@ pub fn instantiate(
     _info: MessageInfo,
     msg: InstantiateMsg,
 ) -> StdResult<Response> {
-    TOKEN_DENOM.save(deps.storage, &msg.token_denom)?;
-    Ok(create_response("instantiate", vec![("token_denom", &msg.token_denom)]))
+    let config = Config {
+        token_denom: msg.token_denom.clone(),
+        platform_wallet: msg.platform_wallet.clone(),
+    };
+    CONFIG.save(deps.storage, &config)?;
+    Ok(create_response("instantiate", vec![
+        ("token_denom", &msg.token_denom),
+        ("platform_wallet", &msg.platform_wallet),
+        ]))
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
@@ -67,17 +75,40 @@ fn execute_transfer(
 ) -> StdResult<Response> {
     // Validate identifier and token denomination
     validate_identifier(identifier)?;
-    let token_denom = TOKEN_DENOM.load(deps.storage)?;
-    if amount.denom != token_denom {
+
+    let config = CONFIG.load(deps.storage)?;
+
+    if amount.denom != config.token_denom {
         return Err(StdError::generic_err("Invalid token denomination"));
     }
+
+    // implement platfrom fee for transfers
+    let platfrom_fee = amount.amount.multiply_ratio(1u128, 100u128);  //1%
+    let recipient_amount = {
+        match amount.amount.checked_sub(platfrom_fee) {
+            Ok(val) => val,
+            Err(_) => return Err(StdError::generic_err("Amount too small to cover fees")),
+        }
+    };
+
+    let fee_msg = BankMsg::Send {
+        to_address: config.platform_wallet.clone(),
+        amount: vec![Coin {
+            denom: amount.denom.clone(),
+            amount: platfrom_fee,
+        }],
+    };
+
     // Check if recipient is registered
     match ACCOUNTS.may_load(deps.storage, identifier.to_string())? {
         Some(recipient_addr) => {
             // Transfer tokens directly
             let transfer_msg = BankMsg::Send { 
                 to_address: recipient_addr.to_string(),
-                amount: vec![amount.clone()], 
+                amount: vec![Coin {
+                    denom: amount.denom.clone(),
+                    amount: recipient_amount,
+                }], 
             };
             Ok(create_response(
                 "transfer",
@@ -85,14 +116,18 @@ fn execute_transfer(
                     ("sender", info.sender.as_ref()),
                     ("recipient", identifier),
                     ("amount", &amount.amount.to_string()),
+                    ("fee", &platfrom_fee.to_string()),
                 ],
-            ).add_message(transfer_msg))
+            ).add_messages(vec![transfer_msg, fee_msg]))
         }
         None => {
             // Hold token in escrow and emit event for off-chain notification
             let escrow = Escrow {
                 sender: info.sender.clone(),
-                amount: amount.clone(),
+                amount: Coin {
+                    denom: amount.denom.clone(),
+                    amount: recipient_amount,
+                },
             };
             ESCROWS.save(deps.storage, identifier.to_string(), &escrow)?;
             let event = Event::new("unregistered transfer")
@@ -106,8 +141,11 @@ fn execute_transfer(
                         ("identifier", identifier),
                         ("sender", info.sender.as_ref()),
                         ("amount", &amount.amount.to_string()),
+                        ("fee", &platfrom_fee.to_string()),
                     ],
-                ).add_event(event))       
+                )
+                .add_event(event)
+                .add_message(fee_msg))       
         }
     }
 }

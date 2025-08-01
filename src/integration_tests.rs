@@ -3,8 +3,7 @@
 mod integration_tests {
 
     use cosmwasm_std::{
-        testing::{message_info, mock_dependencies, mock_env, MockApi, MockQuerier, MockStorage},
-        Addr, Coin, CosmosMsg, OwnedDeps, Response, StdError, StdResult, Uint128
+        testing::{message_info, mock_dependencies, mock_env, MockApi, MockQuerier, MockStorage}, Addr, BankMsg, Coin, CosmosMsg, OwnedDeps, Response, StdError, StdResult, Uint128
     };
     use crate::contract::{execute, instantiate, query};
     use crate::msg::{
@@ -19,6 +18,7 @@ mod integration_tests {
         let info = message_info(&Addr::unchecked("creator"), &[]);
         let msg = InstantiateMsg {
             token_denom: "uxion".to_string(),
+            platform_wallet: "platform_wallet".to_string(),
         };
         let res = instantiate(deps.as_mut(), env.clone(), info, msg).unwrap();
         let contract_addr = env.contract.address.to_string();
@@ -32,8 +32,13 @@ mod integration_tests {
         let sender = message_info(&Addr::unchecked("sender"), &[]);
         let recipient = message_info(&Addr::unchecked("recipient"), &[]);
 
+        let instantiate_msg = InstantiateMsg {
+            token_denom: "uxion".to_string(),
+            platform_wallet: "platform_wallet".to_string(),
+        };
+
         // Instantiate contract
-        let (_res, _contract_addr) = setup_contract(&mut deps);
+        let _ = instantiate(deps.as_mut(), env.clone(), sender.clone(), instantiate_msg);
 
         // register sender  with email
         let register_msg = &ExecuteMsg::Register {
@@ -50,19 +55,45 @@ mod integration_tests {
         assert_eq!(account.address, Some(Addr::unchecked("sender")));
 
         // transfer to unregistered email (should go to escrow)
+        let full_amount = Uint128::from(10_000_000u128);
+        let platform_fee = full_amount.multiply_ratio(1u128, 100u128);
+        let expected_escrowed = full_amount.checked_sub(platform_fee).unwrap();
+
         let transfer_msg = &ExecuteMsg::Transfer { 
             identifier: "unregistered@mail.com".to_string(),
             amount: Coin {
                 denom: "uxion".to_string(),
-                amount: Uint128::from(10000000u128),
+                amount: full_amount,
             },
         };
-        let sender_with_funds = message_info(&Addr::unchecked("sender"), &[Coin {
+        let sender_with_balance = message_info(&Addr::unchecked("sender"), &[Coin {
             denom: "uxion".to_string(),
-            amount: Uint128::from(10000000u128),
+            amount: full_amount,
         }]);
-        let res = execute(deps.as_mut(), env.clone(), sender_with_funds, transfer_msg)?;
+        let res = execute(deps.as_mut(), env.clone(), sender_with_balance, transfer_msg)?;
+        
+        // check that escrow was created
         assert_eq!(res.attributes[0].value, "escrow");
+
+        // check that platform fee was sent in a BankMsg
+        let fee_msg = res.messages.iter().find_map(|msg| match &msg.msg{
+            CosmosMsg::Bank(BankMsg::Send { to_address, amount }) => {
+                if to_address == "platform_wallet" {
+                    Some(amount.clone())
+                }else {
+                    None
+                }
+            }
+            _ => None,
+        });
+
+        assert_eq!(
+            fee_msg.unwrap(),
+            vec![Coin {
+                denom: "uxion".to_string(),
+                amount: platform_fee,
+            }]
+        );
 
         // Query escrow
         let query_escrow_msg = QueryMsg::GetEscrow { 
@@ -70,11 +101,15 @@ mod integration_tests {
         };
         let res = query(deps.as_ref(), env.clone(), query_escrow_msg)?;
         let escrow: EscrowResponse = cosmwasm_std::from_json(&res)?;
+        assert!(
+            escrow.escrow.is_some(),
+            "Expected escrow for 'unregistered@mail.com' but found none"
+        );
         assert_eq!(
             escrow.escrow.unwrap().amount,
             Coin {
                 denom: "uxion".to_string(),
-                amount: Uint128::from(10000000u128),
+                amount: expected_escrowed,
             }
         );
 
@@ -90,17 +125,36 @@ mod integration_tests {
         };
         let res = execute(deps.as_mut(), env.clone(), recipient, claim_msg)?;
         assert_eq!(res.attributes[0].value, "claim");
-        assert!(res.messages.iter().any(|msg| matches!(
-            msg.msg,
-            CosmosMsg::Bank(_),
-        )));
+
+        // verify the claimed amount matches escrow
+        let transfer_back = res.messages.iter().find_map(|msg| match &msg.msg {
+            CosmosMsg::Bank(BankMsg::Send { to_address, amount }) => {
+                if to_address == "recipient" {
+                    Some(amount.clone())
+                }else {
+                    None
+                }
+            }
+            _ => None
+        });
+        assert_eq!(
+            transfer_back.unwrap(),
+            vec![Coin {
+                denom: "uxion".to_string(),
+                amount: expected_escrowed,
+            }]
+        );
+
 
         // Verify escrow is Clear
-        let query_escrow_msg = QueryMsg::GetEscrow { 
-            identifier: "unregistered@mail.com".to_string(), 
-        };
-        let res = query(deps.as_ref(), env.clone(), query_escrow_msg)?;
-        let escrow: EscrowResponse = cosmwasm_std::from_json(&res)?;
+        let escrow_check = query(
+            deps.as_ref(),
+            env.clone(),
+            QueryMsg::GetEscrow {
+                identifier: "recipient@mail.com".to_string(),
+            },
+        )?;
+        let escrow: EscrowResponse = cosmwasm_std::from_json(&escrow_check)?;
         assert_eq!(escrow.escrow, None);
 
         Ok(())
