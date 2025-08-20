@@ -34,11 +34,11 @@ pub fn execute(
     deps: DepsMut,
     env: Env,
     info: MessageInfo,
-    msg: &ExecuteMsg,
+    msg: ExecuteMsg,
 ) -> StdResult<Response> {
     match msg {
         ExecuteMsg::Register { identifier } => execute_register(deps, info, identifier),
-        ExecuteMsg::Transfer { identifier, amount } => execute_transfer(deps, env, info, identifier, amount),
+        ExecuteMsg::Transfer { identifier, amount } => execute_transfer(deps, env, info, identifier, &amount),
         ExecuteMsg::Claim { identifier } => execute_claim(deps, info, identifier),    
     }
 }
@@ -46,10 +46,10 @@ pub fn execute(
 fn execute_register(
     deps: DepsMut,
     info: MessageInfo,
-    identifier: &str
+    identifier: String
 ) -> StdResult<Response> {
     // Validate identifier (basic mail or username check)
-    validate_identifier(identifier)?;
+    validate_identifier(identifier.clone())?;
 
     // check if identifier is already registered
     if ACCOUNTS.has(deps.storage, identifier.to_string()) {
@@ -60,7 +60,7 @@ fn execute_register(
     Ok(create_response(
         "register",
         vec![
-            ("identifier", identifier),
+            ("identifier", &identifier),
             ("address", info.sender.as_ref()),
         ],
     ))
@@ -70,11 +70,11 @@ fn execute_transfer(
     deps: DepsMut,
     _env: Env,
     info: MessageInfo,
-    identifier: &str,
+    identifier: String,
     amount: &Coin,
 ) -> StdResult<Response> {
     // Validate identifier and token denomination
-    validate_identifier(identifier)?;
+    validate_identifier(identifier.clone())?;
 
     let config = CONFIG.load(deps.storage)?;
 
@@ -114,7 +114,7 @@ fn execute_transfer(
                 "transfer",
                 vec![
                     ("sender", info.sender.as_ref()),
-                    ("recipient", identifier),
+                    ("recipient", &identifier),
                     ("amount", &amount.amount.to_string()),
                     ("fee", &platfrom_fee.to_string()),
                 ],
@@ -131,14 +131,14 @@ fn execute_transfer(
             };
             ESCROWS.save(deps.storage, identifier.to_string(), &escrow)?;
             let event = Event::new("unregistered transfer")
-                    .add_attribute("identifier", identifier)
+                    .add_attribute("identifier", &identifier)
                     .add_attribute("sender", info.sender.to_string())
                     .add_attribute("amount", amount.amount.to_string())
                     .add_attribute("denom", amount.denom.clone());
                 Ok(create_response(
                     "escrow",
                     vec![
-                        ("identifier", identifier),
+                        ("identifier", &identifier),
                         ("sender", info.sender.as_ref()),
                         ("amount", &amount.amount.to_string()),
                         ("fee", &platfrom_fee.to_string()),
@@ -153,10 +153,10 @@ fn execute_transfer(
 fn execute_claim(
     deps: DepsMut,
     info: MessageInfo,
-    identifier: &str
+    identifier: String
 ) -> StdResult<Response> {
     // validate identifier
-    validate_identifier(identifier)?;
+    validate_identifier(identifier.clone())?;
     // check if Identifier is registered to the caller
     match ACCOUNTS.may_load(deps.storage, identifier.to_string())? {
         Some(addr) if addr == info.sender => {
@@ -173,7 +173,7 @@ fn execute_claim(
                     Ok(create_response(
                         "claim",
                         vec![
-                            ("identifier", identifier),
+                            ("identifier", &identifier),
                             ("recipient", info.sender.as_ref()),
                             ("amount", &escrow.amount.amount.to_string()),
                         ],

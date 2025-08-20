@@ -3,9 +3,9 @@ use regex::Regex;
 
 
 // validate email format
-pub fn validate_email(email: &str) -> StdResult<()> {
+pub fn validate_email(email: String) -> StdResult<()> {
     let email_regex = Regex::new(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$").unwrap(); 
-    if email_regex.is_match(email) {
+    if email_regex.is_match(&email) {
         Ok(())
     }else {
         Err(StdError::generic_err("Invalid email format"))
@@ -13,9 +13,9 @@ pub fn validate_email(email: &str) -> StdResult<()> {
 }
 
 // Validate username (alphanumeric, 3-32 characters)
-pub fn validate_username(username: &str) -> StdResult<()> {
+pub fn validate_username(username: String) -> StdResult<()> {
     let username_regex = Regex::new(r"^[a-zA-Z0-9]{3,32}$").unwrap();
-    if username_regex.is_match(username) {
+    if username_regex.is_match(&username) {
         Ok(())
     } else {
         Err(StdError::generic_err("Username must be 3-32 alphanumeric characters"))
@@ -23,7 +23,7 @@ pub fn validate_username(username: &str) -> StdResult<()> {
 }
 
 // validate identifier (email or username)
-pub fn validate_identifier(identifier: &str) -> StdResult<()> {
+pub fn validate_identifier(identifier: String) -> StdResult<()> {
     if identifier.contains('@') {
         validate_email(identifier)
     }else {

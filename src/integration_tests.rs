@@ -44,7 +44,7 @@ mod integration_tests {
         let register_msg = &ExecuteMsg::Register {
             identifier: "sender@mail.com".to_string(),
         };
-        execute(deps.as_mut(), env.clone(), sender.clone(), register_msg)?;
+        execute(deps.as_mut(), env.clone(), sender.clone(), register_msg.clone())?;
 
         // Query account to verify registration
         let query_msg = QueryMsg::GetAccount { 
@@ -70,7 +70,7 @@ mod integration_tests {
             denom: "uxion".to_string(),
             amount: full_amount,
         }]);
-        let res = execute(deps.as_mut(), env.clone(), sender_with_balance, transfer_msg)?;
+        let res = execute(deps.as_mut(), env.clone(), sender_with_balance, transfer_msg.clone())?;
         
         // check that escrow was created
         assert_eq!(res.attributes[0].value, "escrow");
@@ -117,13 +117,13 @@ mod integration_tests {
         let register_recipient_msg = &ExecuteMsg::Register { 
             identifier: "unregistered@mail.com".to_string(), 
         };
-        execute(deps.as_mut(), env.clone(), recipient.clone(), register_recipient_msg)?;
+        execute(deps.as_mut(), env.clone(), recipient.clone(), register_recipient_msg.clone())?;
 
         //Claim escrowed token
         let claim_msg = &ExecuteMsg::Claim { 
             identifier: "unregistered@mail.com".to_string(), 
         };
-        let res = execute(deps.as_mut(), env.clone(), recipient, claim_msg)?;
+        let res = execute(deps.as_mut(), env.clone(), recipient, claim_msg.clone())?;
         assert_eq!(res.attributes[0].value, "claim");
 
         // verify the claimed amount matches escrow
@@ -174,7 +174,7 @@ mod integration_tests {
         let register_msg = &ExecuteMsg::Register { 
             identifier: "invalid-email".to_string(), 
         };
-        let res = execute(deps.as_mut(), env.clone(), sender.clone(), register_msg);
+        let res = execute(deps.as_mut(), env.clone(), sender.clone(), register_msg.clone());
         assert!(res.is_err());
         assert_eq!(
             res.unwrap_err(),
@@ -198,10 +198,10 @@ mod integration_tests {
         let register_msg = &ExecuteMsg::Register { 
             identifier: "user@mail.com".to_string(), 
         };
-        execute(deps.as_mut(), env.clone(), sender.clone(), register_msg)?;
+        execute(deps.as_mut(), env.clone(), sender.clone(), register_msg.clone())?;
 
         // Try registering the same email again
-        let res = execute(deps.as_mut(), env.clone(), sender, register_msg);
+        let res = execute(deps.as_mut(), env.clone(), sender, register_msg.clone());
         assert!(res.is_err());
         assert_eq!(
             res.unwrap_err(),
@@ -227,7 +227,7 @@ mod integration_tests {
         let register_msg = &ExecuteMsg::Register { 
             identifier: "sender@mail.com".to_string(), 
         };
-        execute(deps.as_mut(), env.clone(), message_info(&Addr::unchecked("sender"), &[]), register_msg)?;
+        execute(deps.as_mut(), env.clone(), message_info(&Addr::unchecked("sender"), &[]), register_msg.clone())?;
 
         // Try transfering to wrong denom
         let transfer_msg = &ExecuteMsg::Transfer { 
@@ -237,7 +237,7 @@ mod integration_tests {
                 amount: Uint128::from(10000000u128),
             },
         };
-        let res = execute(deps.as_mut(), env.clone(), sender, transfer_msg);
+        let res = execute(deps.as_mut(), env.clone(), sender, transfer_msg.clone());
         assert!(res.is_err());
         assert_eq!(
             res.unwrap_err(),
